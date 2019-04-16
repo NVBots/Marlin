@@ -104,9 +104,12 @@
  *        The '#' is necessary when calling from within sd files, as it stops buffer prereading
  * M33  - Get the longname version of a path. (Requires LONG_FILENAME_HOST_SUPPORT)
  * M34  - Set SD Card sorting options. (Requires SDCARD_SORT_ALPHA)
+ * M38  - CI custom - Echo string back on serial connection
  * M42  - Change pin status via gcode: M42 P<pin> S<value>. LED pin assumed if P is omitted.
  * M43  - Display pin status, watch pins for changes, watch endstops & toggle LED, Z servo probe test, toggle pins
  * M48  - Measure Z Probe repeatability: M48 P<points> X<pos> Y<pos> V<level> E<engage> L<legs> S<chizoid>. (Requires Z_MIN_PROBE_REPEATABILITY_TEST)
+ * M67  - CI custom Drop to bootloader for remote firmware re-flash
+ * M68  - Move DC motor. M68 F1000 := move forward 1000ms. M68 B1000 := move backwards 1000ms
  * M75  - Start the print job timer.
  * M76  - Pause the print job timer.
  * M77  - Stop the print job timer.
@@ -199,6 +202,7 @@
  * M406 - Disable Filament Sensor flow control. (Requires FILAMENT_WIDTH_SENSOR)
  * M407 - Display measured filament diameter in millimeters. (Requires FILAMENT_WIDTH_SENSOR)
  * M410 - Quickstop. Abort all planned moves.
+ * M411 - CI custom - Removal motor
  * M420 - Enable/Disable Leveling (with current values) S1=enable S0=disable (Requires MESH_BED_LEVELING or ABL)
  * M421 - Set a single Z coordinate in the Mesh Leveling grid. X<units> Y<units> Z<units> (Requires MESH_BED_LEVELING, AUTO_BED_LEVELING_BILINEAR, or AUTO_BED_LEVELING_UBL)
  * M428 - Set the home_offset based on the current_position. Nearest edge applies. (Disabled by NO_WORKSPACE_OFFSETS or DELTA)
@@ -262,6 +266,7 @@
 #include "endstops.h"
 #include "temperature.h"
 #include "cardreader.h"
+#include "DCMotor.h"
 #include "configuration_store.h"
 #include "language.h"
 #include "pins_arduino.h"
@@ -7612,6 +7617,13 @@ inline void gcode_M31() {
 #endif // SDSUPPORT
 
 /**
+ * M38: Echo string on serial connection
+ */
+inline void gcode_M38() {
+
+}
+
+/**
  * Sensitive pin test for M42, M226
  */
 static bool pin_is_protected(const pin_t pin) {
@@ -8205,6 +8217,34 @@ inline void gcode_M42() {
   }
 
 #endif // G26_MESH_VALIDATION
+
+/**
+ * M67: Drop to the bootloader
+ */
+inline void gcode_M67() {
+        cli();
+        // disable watchdog, if enabled
+        // disable all peripherals
+        kill("M67");
+        UDCON = 1;
+        USBCON = (1<<FRZCLK);  // disable USB
+        UCSR1B = 0;
+        delay(500);
+        #if defined(__AVR_AT90USB1286__)             // Teensy++ 2.0
+            EIMSK = 0; PCICR = 0; SPCR = 0; ACSR = 0; EECR = 0; ADCSRA = 0;
+            TIMSK0 = 0; TIMSK1 = 0; TIMSK2 = 0; TIMSK3 = 0; UCSR1B = 0; TWCR = 0;
+            DDRA = 0; DDRB = 0; DDRC = 0; DDRD = 0; DDRE = 0; DDRF = 0;
+            PORTA = 0; PORTB = 0; PORTC = 0; PORTD = 0; PORTE = 0; PORTF = 0;
+            asm volatile("jmp 0x1F000");
+        #endif
+}
+
+/**
+ * M68: DC Motor
+ */
+inline void gcode_M68() {
+
+}
 
 #if ENABLED(ULTRA_LCD) && ENABLED(LCD_SET_PROGRESS_MANUALLY)
   /**
@@ -10463,6 +10503,30 @@ inline void gcode_M400() { planner.synchronize(); }
   }
 
 #endif // FILAMENT_WIDTH_SENSOR
+
+/**
+ * M411: Show configuration
+ */
+inline void gcode_M411() {
+        SERIAL_ECHO_START();
+        SERIAL_ECHO("HARDWARE_VERSION=");
+        SERIAL_ECHO("STRING_NV_HARDWARE_VERSION");
+        SERIAL_ECHO(" SOFTWARE_VERSION=");
+        SERIAL_ECHO("STRING_NV_SOFTWARE_VERSION");
+        SERIAL_ECHO(" MOTHERBOARD=");
+        SERIAL_ECHO(MOTHERBOARD);
+        SERIAL_ECHO(" TEMP_SENSOR_0=");
+        SERIAL_ECHO(TEMP_SENSOR_0);
+        SERIAL_ECHO(" TEMP_SENSOR_1=");
+        SERIAL_ECHO(TEMP_SENSOR_1);
+        SERIAL_ECHO(" TEMP_SENSOR_BED=");
+        SERIAL_ECHO(TEMP_SENSOR_BED);
+        SERIAL_ECHO(" TEMP_BED_PIN=");
+        SERIAL_ECHO(TEMP_BED_PIN);
+        SERIAL_ECHO(" NUM_SERVOS=");
+        SERIAL_ECHO("NUM_SERVOS");
+        SERIAL_ECHOLN("");
+}
 
 void quickstop_stepper() {
   planner.quick_stop();
@@ -12779,6 +12843,8 @@ void process_parsed_command() {
         case 928: gcode_M928(); break;                            // M928: Start SD write
       #endif // SDSUPPORT
 
+      case 38: gcode_M38(); break;                                // M38: CI custom - Echo a string on serial connection
+
       case 31: gcode_M31(); break;                                // M31: Report print job elapsed time
 
       case 42: gcode_M42(); break;                                // M42: Change pin state
@@ -12796,6 +12862,7 @@ void process_parsed_command() {
       #if ENABLED(ULTRA_LCD) && ENABLED(LCD_SET_PROGRESS_MANUALLY)
         case 73: gcode_M73(); break;                              // M73: Set Print Progress %
       #endif
+      case 67: gcode_M67(); break;                                // M67: CI custom - Drop to the bootloader
       case 75: gcode_M75(); break;                                // M75: Start Print Job Timer
       case 76: gcode_M76(); break;                                // M76: Pause Print Job Timer
       case 77: gcode_M77(); break;                                // M77: Stop Print Job Timer
@@ -12998,6 +13065,8 @@ void process_parsed_command() {
         case 406: gcode_M406(); break;                            // M406: Disable Filament Width Sensor
         case 407: gcode_M407(); break;                            // M407: Report Measured Filament Width
       #endif
+
+      case 411: gcode_M411(); break;                              // M411: CI custom - Removal motor
 
       #if HAS_LEVELING
         case 420: gcode_M420(); break;                            // M420: Set Bed Leveling Enabled / Fade
